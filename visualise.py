@@ -72,9 +72,13 @@ def inject_vcd_commands(test_code):
     
     return modified_code
 
+
+
+
+
 def visualize_vcd(vcd_file_path):
     """
-    Visualize signals from VCD file with improved styling
+    Visualize signals from VCD file without legends
     """
     try:
         vcd = vcdvcd.VCDVCD(vcd_file_path)
@@ -84,24 +88,50 @@ def visualize_vcd(vcd_file_path):
             st.error("No signals found in the VCD file.")
             return None
         
+        max_spacing = 0.08 if len(signals) > 1 else 0
+        
         fig = make_subplots(
             rows=len(signals),
             cols=1,
             shared_xaxes=True,
-            vertical_spacing=0.05,
+            vertical_spacing=max_spacing,
             subplot_titles=[s.replace("_tb", "") for s in signals]
         )
         
         colors = ['#2E91E5', '#E15F99', '#1CA71C', '#FB0D0D', '#DA16FF', '#ffc100']
         
+        # Find global max time for x-axis range
+        max_time = 0
+        for signal_name in signals:
+            signal = vcd[signal_name]
+            if signal.tv:
+                max_time = max(max_time, signal.tv[-1][0])
+        
         for idx, signal_name in enumerate(signals, 1):
             signal = vcd[signal_name]
             tv = signal.tv
             
+            if not tv:
+                continue
+                
             times, values = [], []
+            last_value = None
+            
+            # Add starting point if needed
+            if tv[0][0] > 0:
+                times.append(0)
+                values.append('0')  # or appropriate default
+            
+            # Process all time-value pairs
             for t, v in tv:
                 times.append(t)
                 values.append(v)
+                last_value = v
+            
+            # Add final point to extend signal to end
+            if times[-1] < max_time:
+                times.append(max_time)
+                values.append(last_value)
             
             try:
                 numeric_values = [int(v, 2) if isinstance(v, str) and v.strip('01') == '' 
@@ -111,10 +141,11 @@ def visualize_vcd(vcd_file_path):
                 numeric_values = [0 if v == '0' else 1 if v == '1' 
                                 else 0.5 for v in values]
             
+            # Create step visualization
             t_steps, v_steps = [], []
             for i in range(len(times)):
                 if i > 0:
-                    t_steps.append(times[i])
+                    t_steps.append(times[i])  # Add vertical line
                     v_steps.append(numeric_values[i-1])
                 t_steps.append(times[i])
                 v_steps.append(numeric_values[i])
@@ -123,70 +154,63 @@ def visualize_vcd(vcd_file_path):
                 go.Scatter(
                     x=t_steps,
                     y=v_steps,
-                    name=signal_name.replace("_tb", ""),
+                    name=signal_name.replace("_tb.", ""),
                     mode='lines',
                     line=dict(
                         shape='hv',
                         color=colors[idx % len(colors)],
                         width=2
                     ),
-                    showlegend=True
+                    showlegend=False  # Removed legend
                 ),
                 row=idx,
                 col=1
             )
             
-            if numeric_values:
-                y_min, y_max = min(numeric_values), max(numeric_values)
-                padding = (y_max - y_min) * 0.2 if y_max != y_min else 0.2
+            # Adjust y-axis for binary signals
+            if all(v in [0, 1] for v in numeric_values):
                 fig.update_yaxes(
-                    range=[y_min - padding, y_max + padding],
+                    range=[-0.2, 1.2],
+                    tickmode='array',
+                    tickvals=[0, 1],
+                    ticktext=['0', '1'],
                     row=idx,
-                    col=1,
-                    tickmode='linear',
-                    tick0=0,
-                    dtick=1
+                    col=1
                 )
         
+        # Update layout
         fig.update_layout(
-            height=250 * len(signals),
-            width=1200,
-            title_text="Waveform Visualization",
-            title_x=0.5,
-            showlegend=True,
-            legend=dict(
-                yanchor="top",
-                y=1.1,
-                xanchor="right",
-                x=1,
-                orientation="h"
-            ),
+            height=max(250 * len(signals), 400),
+            showlegend=False,  # Removed legend
             plot_bgcolor='rgb(25, 25, 25)',
             paper_bgcolor='rgb(25, 25, 25)',
             font=dict(color='white'),
-            margin=dict(l=50, r=50, t=100, b=50)
+            xaxis=dict(range=[0, max_time * 1.1])  # Extend x-axis slightly
         )
         
-        fig.update_xaxes(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='rgba(128, 128, 128, 0.2)',
-            zeroline=True,
-            zerolinecolor='rgba(128, 128, 128, 0.5)'
-        )
-        fig.update_yaxes(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='rgba(128, 128, 128, 0.2)',
-            zeroline=True,
-            zerolinecolor='rgba(128, 128, 128, 0.5)'
-        )
+        # Update all x-axes to show full range
+        fig.update_xaxes(range=[0, max_time * 1.1])
         
         return fig
         
     except Exception as e:
         st.error(f"Error processing VCD file: {str(e)}")
         return None
+
+def save_verilog_files(test_code, design_code):
+    """
+    Save the Verilog files to the current working directory
+    """
+    try:
+        with open("test.v", "w") as f:
+            f.write(test_code)
+        with open("design.v", "w") as f:
+            f.write(design_code)
+        return True
+    except Exception as e:
+        st.error(f"Error saving files: {str(e)}")
+        return False
+
 
 def run_verilog_simulation(test_code, design_code):
     """
@@ -242,6 +266,7 @@ def run_verilog_simulation(test_code, design_code):
     except Exception as e:
         st.error(f"Error during simulation: {str(e)}")
         return False
+
 
 def main():
     configure_page()
@@ -315,9 +340,15 @@ endmodule""",
                 placeholder="Write your design code here..."
             )
         
-        col1, col2, col3 = st.columns([2,1,2])
+        col1, col2, col3, col4 = st.columns([2,1,1,2])
         with col2:
             run_button = st.button("Run Simulation", type="primary", use_container_width=True)
+        with col3:
+            save_button = st.button("Save Files", type="secondary", use_container_width=True)
+        
+        if save_button:
+            if save_verilog_files(test_code, design_code):
+                st.success("Files saved successfully!")
         
         if run_button:
             if not test_code.strip() or not design_code.strip():
@@ -348,6 +379,7 @@ endmodule""",
         1. Enter your test bench code in the left editor
         2. Enter your design code in the right editor
         3. Click "Run Simulation" to execute
+        4. Click "Save Files" to save your test.v and design.v files
         
         ### Editor Features
         - Syntax highlighting for Verilog
@@ -374,7 +406,7 @@ endmodule""",
         """)
 
     # Cleanup temporary files
-    for file in ["test.v", "design.v", "simulation", "waveform.vcd"]:
+    for file in ["simulation", "waveform.vcd"]:
         if os.path.exists(file):
             try:
                 os.remove(file)
