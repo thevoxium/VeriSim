@@ -74,11 +74,9 @@ def inject_vcd_commands(test_code):
 
 
 
-
-
 def visualize_vcd(vcd_file_path):
     """
-    Visualize signals from VCD file without legends
+    Visualize signals from VCD file with optimal spacing and sizing
     """
     try:
         vcd = vcdvcd.VCDVCD(vcd_file_path)
@@ -88,13 +86,16 @@ def visualize_vcd(vcd_file_path):
             st.error("No signals found in the VCD file.")
             return None
         
-        max_spacing = 0.08 if len(signals) > 1 else 0
+        # Calculate optimal figure dimensions
+        num_signals = len(signals)
+        height_per_signal = 120  # Base height per signal
+        total_height = height_per_signal * num_signals
         
         fig = make_subplots(
-            rows=len(signals),
+            rows=num_signals,
             cols=1,
             shared_xaxes=True,
-            vertical_spacing=max_spacing,
+            vertical_spacing=0.03,  # Small fixed spacing between plots
             subplot_titles=[s.replace("_tb", "") for s in signals]
         )
         
@@ -120,7 +121,7 @@ def visualize_vcd(vcd_file_path):
             # Add starting point if needed
             if tv[0][0] > 0:
                 times.append(0)
-                values.append('0')  # or appropriate default
+                values.append('0')
             
             # Process all time-value pairs
             for t, v in tv:
@@ -145,7 +146,7 @@ def visualize_vcd(vcd_file_path):
             t_steps, v_steps = [], []
             for i in range(len(times)):
                 if i > 0:
-                    t_steps.append(times[i])  # Add vertical line
+                    t_steps.append(times[i])
                     v_steps.append(numeric_values[i-1])
                 t_steps.append(times[i])
                 v_steps.append(numeric_values[i])
@@ -161,41 +162,65 @@ def visualize_vcd(vcd_file_path):
                         color=colors[idx % len(colors)],
                         width=2
                     ),
-                    showlegend=False  # Removed legend
+                    showlegend=False
                 ),
                 row=idx,
                 col=1
             )
             
-            # Adjust y-axis for binary signals
+            # Adjust y-axis for binary signals with more spacing
             if all(v in [0, 1] for v in numeric_values):
                 fig.update_yaxes(
-                    range=[-0.2, 1.2],
+                    range=[-0.5, 1.5],  # Increased range for better spacing
                     tickmode='array',
                     tickvals=[0, 1],
                     ticktext=['0', '1'],
                     row=idx,
-                    col=1
+                    col=1,
+                    showgrid=False,  # Remove grid for cleaner look
+                    zeroline=False,   # Remove zero line
+                )
+            else:
+                # For non-binary signals, auto-range with some padding
+                min_val = min(numeric_values)
+                max_val = max(numeric_values)
+                padding = (max_val - min_val) * 0.1  # 10% padding
+                fig.update_yaxes(
+                    range=[min_val - padding, max_val + padding],
+                    row=idx,
+                    col=1,
+                    showgrid=False,
+                    zeroline=False,
                 )
         
-        # Update layout
+        # Update layout with better spacing and sizing
         fig.update_layout(
-            height=max(250 * len(signals), 400),
-            showlegend=False,  # Removed legend
+            height=total_height,
+            showlegend=False,
             plot_bgcolor='rgb(25, 25, 25)',
             paper_bgcolor='rgb(25, 25, 25)',
             font=dict(color='white'),
-            xaxis=dict(range=[0, max_time * 1.1])  # Extend x-axis slightly
+            margin=dict(l=50, r=20, t=50, b=20),  # Adjust margins
+            xaxis=dict(
+                range=[0, max_time * 1.02],  # Slight padding on x-axis
+                showgrid=False,
+                zeroline=False
+            )
         )
         
-        # Update all x-axes to show full range
-        fig.update_xaxes(range=[0, max_time * 1.1])
+        # Update all x-axes to show full range and remove grids
+        fig.update_xaxes(
+            range=[0, max_time * 1.02],
+            showgrid=False,
+            zeroline=False
+        )
         
         return fig
         
     except Exception as e:
         st.error(f"Error processing VCD file: {str(e)}")
         return None
+
 
 def save_verilog_files(test_code, design_code):
     """
